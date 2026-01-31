@@ -1,6 +1,6 @@
 import os
 import psutil
-import threading
+import asyncio
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -8,40 +8,47 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 
-app_web = Flask(__name__)
+# ---- Flask app (keeps Render Web Service alive) ----
+flask_app = Flask(__name__)
 
-@app_web.route("/")
+@flask_app.route("/")
 def home():
-    return "✅ Bot is running (Web Service active)"
+    return "✅ Web service is running. Telegram bot active."
+
+# ---- Telegram bot handlers ----
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Bot is live!\nUse /stats to check RAM & CPU."
+    )
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cpu = psutil.cpu_percent(interval=1)
     mem = psutil.virtual_memory()
 
-    total_ram = mem.total / (1024 ** 3)
-    used_ram = mem.used / (1024 ** 3)
-
     msg = (
         "📊 *System Stats*\n\n"
-        f"🧠 CPU: `{cpu}%`\n"
-        f"💾 RAM: `{mem.percent}%`\n"
-        f"📦 Used: `{used_ram:.2f} GB`\n"
-        f"📀 Total: `{total_ram:.2f} GB`"
+        f"🧠 CPU Usage: `{cpu}%`\n"
+        f"💾 RAM Usage: `{mem.percent}%`\n"
+        f"📦 Used RAM: `{mem.used / 1024**3:.2f} GB`\n"
+        f"📀 Total RAM: `{mem.total / 1024**3:.2f} GB`"
     )
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Bot is live!\nUse /stats to check RAM & CPU."
-    )
-
-def run_bot():
+# ---- Run Telegram bot ----
+async def run_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
-    app.run_polling()
 
+    await app.initialize()
+    await app.start()
+    await app.bot.initialize()
+    await app.stop()  # keep polling alive
+    await app.run_polling()
+
+# ---- Main entry ----
 if __name__ == "__main__":
-    threading.Thread(target=run_bot).start()
-    app_web.run(host="0.0.0.0", port=PORT)
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_bot())
+    flask_app.run(host="0.0.0.0", port=PORT)
